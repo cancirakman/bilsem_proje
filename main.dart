@@ -15,6 +15,12 @@ class _MyAppState extends State<MyApp> {
 
 @override
 Widget build(BuildContext context) {
-    return const HomePage();    
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(fontFamily: "OpenSans"),
+      title: "deneme",
+      // Ana widget'ı buraya yerleştiriyoruz.
+      home: const HomePage(), 
+    );    
  }
 }
