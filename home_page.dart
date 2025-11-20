@@ -3,9 +3,9 @@ import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 import 'package:image_gallery_saver_plus/image_gallery_saver_plus.dart'; 
 import 'package:flutter/services.dart'; 
-
-// TFLite sınıfını içe aktarıyoruz
+import 'package:geolocator/geolocator.dart'; // Konum için
 import 'tflite_classifier.dart'; 
+import 'database_manager.dart'; // Realtime DB ve Storage için
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -19,8 +19,9 @@ class _HomePageState extends State<HomePage> {
   final picker = ImagePicker();
   bool _isPicking = false; 
   
-  // TFLite Sınıflandırıcısını tanımlıyoruz
+  // TFLite ve Database Sınıflarını tanımlıyoruz
   late TFLiteClassifier _classifier;
+  final DatabaseManager _dbManager = DatabaseManager(); // Database Manager örneği
   
   // Sınıflandırma sonucunu tutmak için
   String _classificationResult = "Başlamak için fotoğraf çekin veya seçin."; 
@@ -28,20 +29,113 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    
-    // TFLiteClassifier örneğini oluştur ve modeli asenkron olarak yükle
     _classifier = TFLiteClassifier();
     _classifier.loadModel();
   }
 
   @override
   void dispose() {
-    // Uygulama kapanırken TFLite modelini kapat
     _classifier.close();
     super.dispose();
   }
 
-  // Galeriye Kaydetme İşlevi
+  // Konum izinlerini kontrol eder ve mevcut konumu alır
+  Future<Position?> _getCurrentLocation() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    // Konum servislerinin açık olup olmadığını kontrol et
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if(mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Konum servisleri kapalı. Lütfen açın.')));
+      }
+      return null;
+    }
+
+    // İzin durumunu kontrol et
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        return null;
+      }
+    }
+    
+    if (permission == LocationPermission.deniedForever) {
+      if(mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Konum izinleri kalıcı olarak reddedildi.')),
+          );
+      }
+      return null;
+    }
+
+    // Konumu al
+    return await Geolocator.getCurrentPosition(
+    // Platforma özel ayarları kullanıyoruz
+    locationSettings: AndroidSettings(
+      accuracy: LocationAccuracy.high, // Yüksek hassasiyet istiyoruz
+      forceLocationManager: true, // Bazı cihazlarda daha iyi çalışır
+      intervalDuration: const Duration(seconds: 4), // Opsiyonel
+      distanceFilter: 100, // Opsiyonel: 100 metreden az değişirse güncelleme
+    ),
+  );
+  }
+
+
+  // Veriyi Realtime DB ve Storage'a kaydetme işlevi
+  Future<void> _saveData({
+    required File imageFile,
+    required String birdName,
+    required double confidence,
+  }) async {
+    // 1. Konumu al
+    Position? currentPosition = await _getCurrentLocation();
+    
+    if (currentPosition == null) {
+        if(mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Kayıt başarısız: Konum alınamadı.')),
+          );
+          // Konum alınamazsa sonucu güncelle
+          setState(() {
+              _classificationResult += "\n(Konum Kaydedilemedi, Kayıt İptal Edildi)";
+          });
+        }
+        return;
+    }
+
+    try {
+      // 2. Fotoğrafı Storage'a yükle
+      String imageUrl = await _dbManager.uploadImageAndGetUrl(imageFile);
+
+      // 3. Verileri Realtime Database'e kaydet
+      await _dbManager.saveObservation(
+        birdName: birdName,
+        confidence: confidence,
+        latitude: currentPosition.latitude,
+        longitude: currentPosition.longitude,
+        imageUrl: imageUrl,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Kayıt Database\'e başarıyla eklendi! 💾')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Veri kaydında kritik hata: ${e.toString()}')),
+        );
+      }
+    }
+  }
+
+
+  // Galeriye Kaydetme İşlevi (Aynı kaldı)
   Future<void> saveImageToGallery(XFile pickedFile) async {
     final bytes = await pickedFile.readAsBytes();
     final result = await ImageGallerySaverPlus.saveImage(
@@ -92,12 +186,19 @@ class _HomePageState extends State<HomePage> {
         if (mounted) {
             setState(() {
                 if (results != null && results.isNotEmpty) {
-                    // En yüksek olasılıklı sonucu al ve sonucu formatla
-                    final bestResult = results.first; // Zaten sıralı
+                    final bestResult = results.first; 
                     _classificationResult = 
                         "${bestResult['label']} (${(bestResult['confidence'] * 100).toStringAsFixed(2)}%)";
+                    
+                    // KRİTİK ADIM: Sınıflandırma bitti, veriyi kaydet.
+                    _saveData(
+                      imageFile: File(pickedFile.path),
+                      birdName: bestResult['label'],
+                      confidence: bestResult['confidence'],
+                    );
+
                 } else {
-                    _classificationResult = "Model sonucu alınamadı. (Model dosya/etiket hatası olabilir)";
+                    _classificationResult = "Model sonucu alınamadı.";
                 }
             });
         }
