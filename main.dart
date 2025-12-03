@@ -29,7 +29,7 @@ Widget build(BuildContext context) {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(fontFamily: "OpenSans"),
       title: "deneme",
-      home: const HomePage(), 
+      home: HomePage(), 
     );    
  }
 }

@@ -1,3 +1,4 @@
+import 'package:bilsem_proje/map_page.dart';
 import 'package:flutter/material.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
@@ -18,6 +19,7 @@ class _HomePageState extends State<HomePage> {
   File? image;
   final picker = ImagePicker();
   bool _isPicking = false; 
+  bool classification = false;
   
   // TFLite ve Database Sınıflarını tanımlıyoruz
   late TFLiteClassifier _classifier;
@@ -189,6 +191,7 @@ class _HomePageState extends State<HomePage> {
                     final bestResult = results.first; 
                     _classificationResult = 
                         "${bestResult['label']} (${(bestResult['confidence'] * 100).toStringAsFixed(2)}%)";
+                      classification = true;
                     
                     // KRİTİK ADIM: Sınıflandırma bitti, veriyi kaydet.
                     _saveData(
@@ -287,11 +290,20 @@ class _HomePageState extends State<HomePage> {
                         )
                       ],
                     ),
+                    SizedBox(height: 50,),
+                    if (classification) 
+                    ElevatedButton(
+                          onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => MapPage()),
+              ),
+                          child: const Text("Nerelerde Görüldü?"),
+                        )
                 ],
               ),
             ),
       ),
-      backgroundColor: const Color.fromARGB(255, 16, 157, 192),
+      backgroundColor: Color.fromARGB(255, 0, 163, 108),
     );
   }
 }
